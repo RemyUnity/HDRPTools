@@ -1,0 +1,10 @@
+{
+    "name": "com.remyunity.tools.hdrp",
+    "displayName": "HDRP Tools",
+    "version": "1.0.0",
+    "unity": "6000.0",
+    "description": "Some tools made to help in HDRP",
+	"dependencies": {
+		"com.unity.render-pipelines.high-definition": "17.0.3"
+    }
+}
