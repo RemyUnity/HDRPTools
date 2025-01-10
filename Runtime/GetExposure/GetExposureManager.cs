@@ -24,17 +24,7 @@ public class GetExposureManager : MonoBehaviour
         }
     }
 
-    class GetExposureCameraData
-    {
-        public bool getExposureEnabled;
-        public float exposure;
-        public HDCamera hdCamera;
-    }
-
-    private Dictionary<Camera, GetExposureCameraData> _cameraExposureData = new Dictionary<Camera, GetExposureCameraData>();
-
-    HDRenderPipeline _hdrp;
-    RTHandle _exposureTexture;
+    static HDRenderPipeline _hdrp;
     static MethodInfo sb_mi_GetExposureTexture;
     static MethodInfo s_mi_GetExposureTexture
     {
@@ -104,103 +94,103 @@ public class GetExposureManager : MonoBehaviour
         }
     }
 
-    float[] _exposureArray = new float[1];
-    ComputeBuffer _exposureReadbackBuffer;
-
-    private void Awake()
+    static float[] _exposureArray = new float[1];
+    static ComputeBuffer s_exposureReadbackBuffer;
+    static ComputeBuffer bs_exposureReadbackBuffer
     {
-        _exposureReadbackBuffer = new ComputeBuffer(1, sizeof(float));
+        get
+        {
+            if (s_exposureReadbackBuffer == null)
+                s_exposureReadbackBuffer = new ComputeBuffer(1, sizeof(float));
+            return s_exposureReadbackBuffer;
+        }
     }
+
+    static float GPUReadbackExposureFromTexture( RTHandle exposureTexture )
+    {
+        s_exposureReadbackCompute.SetBuffer(0, "ExposureOutput", bs_exposureReadbackBuffer);
+        s_exposureReadbackCompute.SetTexture(0, "ExposureTexture", exposureTexture.rt);
+
+        s_exposureReadbackCompute.Dispatch(0, 1, 1, 1);
+
+        s_exposureReadbackBuffer.GetData(_exposureArray);
+
+        return _exposureArray[0];
+    }
+
+    class GetExposureCameraData
+    {
+        float _exposure;
+        public float exposure => GetExposure();
+        HDCamera _hdCamera;
+        int _lastFrameRefreshed;
+        RTHandle _exposureTexture;
+
+        public GetExposureCameraData(Camera camera, HDRenderPipeline hdrp, bool enabled = true)
+        {
+            _exposure = 0;
+            _hdCamera = HDCamera.GetOrCreate(camera);
+            _lastFrameRefreshed = 0;
+            RefreshExposureTexture(hdrp);
+        }
+
+        public void RefreshExposureTexture(HDRenderPipeline hdrp)
+        {
+            _exposureTexture = (RTHandle) s_mi_GetExposureTexture.Invoke(hdrp, new object[] { _hdCamera });
+        }
+
+        float GetExposure()
+        {
+            if (_lastFrameRefreshed != Time.renderedFrameCount)
+            {
+                _lastFrameRefreshed = Time.renderedFrameCount;
+                _exposure = GPUReadbackExposureFromTexture(_exposureTexture);
+            }
+
+            return _exposure;
+        }
+    }
+
+    private Dictionary<Camera, GetExposureCameraData> _cameraExposureData = new Dictionary<Camera, GetExposureCameraData>();
 
     private void OnEnable()
     {
-        RenderPipelineManager.endCameraRendering += OnCameraFinishedRendering;
+        RenderPipelineManager.activeRenderPipelineCreated += RPCreated;
     }
 
     private void OnDisable()
     {
-        RenderPipelineManager.endCameraRendering -= OnCameraFinishedRendering;
+        RenderPipelineManager.activeRenderPipelineCreated -= RPCreated;
     }
 
-    void OnCameraFinishedRendering(ScriptableRenderContext ctx, Camera cam)
+    void RPCreated()
     {
-        /*
-        _hdrp = (HDRenderPipeline)RenderPipelineManager.currentPipeline;
-
-        if (_hdrp == null || s_exposureReadbackCompute == null)
-            return;
-
-        if (!_cameraExposureData.ContainsKey(cam))
-            _cameraExposureData.Add(cam, new GetExposureCameraData()
-            {
-                getExposureEnabled = false,
-                exposure = 0,
-                hdCamera = HDCamera.GetOrCreate(cam)
-            });
-
-        if (!_cameraExposureData[cam].getExposureEnabled)
-            return;
-
-        _exposureTexture = (RTHandle) s_mi_GetExposureTexture.Invoke(_hdrp, new object[] { _cameraExposureData[cam].hdCamera });
-
-        s_exposureReadbackCompute.SetBuffer(0, "ExposureOutput", _exposureReadbackBuffer);
-        s_exposureReadbackCompute.SetTexture(0, "ExposureTexture", _exposureTexture.rt);
-
-        s_exposureReadbackCompute.Dispatch(0, 1, 1, 1);
-
-        _exposureReadbackBuffer.GetData(_exposureArray);
-
-        _cameraExposureData[cam].exposure = _exposureArray[0];
-        */
+        _hdrp = _hdrp = (HDRenderPipeline)RenderPipelineManager.currentPipeline;
     }
 
-    public static void SetCameraExposureReadbackActive( Camera camera, bool state )
+    private void UpdateAllRTHandles()
     {
-        if (s_instance._cameraExposureData.ContainsKey(camera))
-            s_instance._cameraExposureData[camera].getExposureEnabled = state;
-        else
-            s_instance._cameraExposureData.Add(camera, new GetExposureCameraData()
-            {
-                getExposureEnabled = state,
-                exposure = 0,
-                hdCamera = HDCamera.GetOrCreate(camera)
-            });
+        if (_hdrp == null)
+            return;
+
+        foreach(var kvp in _cameraExposureData)
+            kvp.Value.RefreshExposureTexture(_hdrp);
     }
 
     public static float GetCameraExposure( Camera camera )
     {
-        if (!s_instance._cameraExposureData.ContainsKey(camera))
-            s_instance._cameraExposureData.Add(camera, new GetExposureCameraData()
-            {
-                getExposureEnabled = true,
-                exposure = 0,
-                hdCamera = HDCamera.GetOrCreate(camera)
-            });
+        if (_hdrp == null)
+        {
+            _hdrp = _hdrp = (HDRenderPipeline)RenderPipelineManager.currentPipeline;
+            s_instance.UpdateAllRTHandles();
+        }
 
-        s_instance._cameraExposureData[camera].getExposureEnabled = true;
+        if (_hdrp == null )
+            return -42;
+
+        if (!s_instance._cameraExposureData.ContainsKey(camera))
+            s_instance._cameraExposureData.Add(camera, new GetExposureCameraData(camera, _hdrp));
 
         return s_instance._cameraExposureData[camera].exposure;
-    }
-
-    private void Update()
-    {
-        _hdrp = (HDRenderPipeline)RenderPipelineManager.currentPipeline;
-        if (_hdrp == null)
-            return;
-
-        foreach (var kvp in _cameraExposureData)
-        {
-            if (kvp.Value.getExposureEnabled)
-            {
-                var exposureTexture = (RTHandle) s_mi_GetExposureTexture.Invoke(_hdrp, new object[] { kvp.Value.hdCamera });
-                s_mi_RequestGpuExposureValue.Invoke(kvp.Value.hdCamera, new object[] { exposureTexture });
-
-                float exp = (float)s_mi_GpuExposureValue.Invoke(kvp.Value.hdCamera, null);
-
-                exp = Mathf.Log(1.0f/exp) / Mathf.Log(2);
-
-                kvp.Value.exposure = exp;
-            }
-        }
     }
 }

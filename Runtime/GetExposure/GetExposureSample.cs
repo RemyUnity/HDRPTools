@@ -10,8 +10,6 @@ public class GetExposureSample : MonoBehaviour
     private void Start()
     {
         _mainCamera = Camera.main;
-
-        GetExposureManager.SetCameraExposureReadbackActive(_mainCamera, true);
     }
 
     private void Update()
