@@ -140,6 +140,9 @@ public class GetExposureManager : MonoBehaviour
         internal bool _everyFrameRefresh = false;
 
         AsyncGPUReadbackRequest _lastAsyncGPUReadbackRequest;
+        Queue<AsyncGPUReadbackRequest> _readbacksQueue = new Queue<AsyncGPUReadbackRequest>();
+
+        int _lastFrameRequest = -1;
 
         List<Action<float>> _asyncReadbackActions = new List<Action<float>>();
 
@@ -184,7 +187,17 @@ public class GetExposureManager : MonoBehaviour
                 if (asyncReadbackAction != null)
                     _asyncReadbackActions.Add(asyncReadbackAction);
 
-                if (_lastAsyncGPUReadbackRequest.done)
+                AsyncGPUReadbackRequest mostRecentDoneRequest = new AsyncGPUReadbackRequest();
+                bool hasDoneRequest = false;
+                while (_readbacksQueue.TryPeek( out var peekResult ) && peekResult.done)
+                {
+                    hasDoneRequest = true;
+                    mostRecentDoneRequest = _readbacksQueue.Dequeue();
+                }
+
+                if (hasDoneRequest)
+                    SetExposureFromRequestCallback(mostRecentDoneRequest);
+                else
                     UpdateExposureRequest();
             }
 
@@ -226,7 +239,15 @@ public class GetExposureManager : MonoBehaviour
         /// </summary>
         internal void UpdateExposureRequest()
         {
-            _lastAsyncGPUReadbackRequest = AsyncGPUReadback.Request(_exposureTexture.rt, 0, 0, 1, 0, 1, 0, 1, _everyFrameRefresh? null : SetExposureFromRequestCallback);
+            if (_lastFrameRequest != Time.renderedFrameCount)
+            {
+                _lastFrameRequest = Time.renderedFrameCount;
+
+                var request = AsyncGPUReadback.Request(_exposureTexture.rt, 0, 0, 1, 0, 1, 0, 1);
+                _readbacksQueue.Enqueue(request);
+
+                _lastAsyncGPUReadbackRequest = request;
+            }
         }
     }
 
